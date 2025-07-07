@@ -1,126 +1,108 @@
-#! /bin/bash
-#Block-IPs-from-countries
-#Github:https://github.com/iiiiiii1/Block-IPs-from-countries
-#Blog:https://www.moerats.com/
+#!/usr/bin/env bash
+# -----------------------------------------------
+# Block-IPs-from-countries – 修改版
+#   • 可按国家代码创建 ipset 列表
+#   • 交互式询问「封锁端口」并仅对该端口 DROP
+#   • 保留原作者其它功能与语法
+# -----------------------------------------------
+# 原始仓库: https://github.com/iiiiiii1/Block-IPs-from-countries [1]
+# -----------------------------------------------
 
 Green="\033[32m"
+Red="\033[31m"
 Font="\033[0m"
 
-#root权限
+# ---------- 基础检测 ----------
 root_need(){
-    if [[ $EUID -ne 0 ]]; then
-        echo "Error:This script must be run as root!" 1>&2
-        exit 1
-    fi
-}
-
-#封禁ip
-block_ipset(){
-check_ipset
-#添加ipset规则
-echo -e "${Green}请输入需要封禁的国家代码，如cn(中国)，注意字母为小写！${Font}"
-read -p "请输入国家代码:" GEOIP
-echo -e "${Green}正在下载IPs data...${Font}"
-wget -P /tmp http://www.ipdeny.com/ipblocks/data/countries/$GEOIP.zone 2> /dev/null
-#检查下载是否成功
-    if [ -f "/tmp/"$GEOIP".zone" ]; then
-	 echo -e "${Green}IPs data下载成功！${Font}"
-    else
-	 echo -e "${Green}下载失败，请检查你的输入！${Font}"
-	 echo -e "${Green}代码查看地址：http://www.ipdeny.com/ipblocks/data/countries/${Font}"
+  if [[ $EUID -ne 0 ]]; then
+    echo -e "${Red}Error: 必须以 root 身份运行脚本！${Font}"
     exit 1
-    fi
-#创建规则
-ipset -N $GEOIP hash:net
-for i in $(cat /tmp/$GEOIP.zone ); do ipset -A $GEOIP $i; done
-rm -f /tmp/$GEOIP.zone
-echo -e "${Green}规则添加成功，即将开始封禁ip！${Font}"
-#开始封禁
-iptables -I INPUT -p tcp -m set --match-set "$GEOIP" src -j DROP
-iptables -I INPUT -p udp -m set --match-set "$GEOIP" src -j DROP
-echo -e "${Green}所指定国家($GEOIP)的ip封禁成功！${Font}"
+  fi
 }
 
-#解封ip
-unblock_ipset(){
-echo -e "${Green}请输入需要解封的国家代码，如cn(中国)，注意字母为小写！${Font}"
-read -p "请输入国家代码:" GEOIP
-#判断是否有此国家的规则
-lookuplist=`ipset list | grep "Name:" | grep "$GEOIP"`
-    if [ -n "$lookuplist" ]; then
-        iptables -D INPUT -p tcp -m set --match-set "$GEOIP" src -j DROP
-	iptables -D INPUT -p udp -m set --match-set "$GEOIP" src -j DROP
-	ipset destroy $GEOIP
-	echo -e "${Green}所指定国家($GEOIP)的ip解封成功，并删除其对应的规则！${Font}"
-    else
-	echo -e "${Green}解封失败，请确认你所输入的国家是否在封禁列表内！${Font}"
-	exit 1
-    fi
+system_check(){
+  if      command -v yum   >/dev/null 2>&1 ; then PM="yum"
+  elif    command -v apt   >/dev/null 2>&1 ; then PM="apt"
+  else
+    echo -e "${Red}暂不支持的发行版，请手工安装 ipset 与 iptables！${Font}"
+    exit 1
+  fi
 }
 
-#查看封禁列表
-block_list(){
-	iptables -L | grep match-set
-}
-
-#检查系统版本
-check_release(){
-    if [ -f /etc/redhat-release ]; then
-        release="centos"
-    elif cat /etc/issue | grep -Eqi "debian"; then
-        release="debian"
-    elif cat /etc/issue | grep -Eqi "ubuntu"; then
-        release="ubuntu"
-    elif cat /etc/issue | grep -Eqi "centos|red hat|redhat"; then
-        release="centos"
-    elif cat /proc/version | grep -Eqi "debian"; then
-        release="debian"
-    elif cat /proc/version | grep -Eqi "ubuntu"; then
-        release="ubuntu"
-    elif cat /proc/version | grep -Eqi "centos|red hat|redhat"; then
-        release="centos"
-    fi
-}
-
-#检查ipset是否安装
 check_ipset(){
-    if [ -f /sbin/ipset ]; then
-        echo -e "${Green}检测到ipset已存在，并跳过安装步骤！${Font}"
-    elif [ "${release}" == "centos" ]; then
-        yum -y install ipset
-    else
-        apt-get -y install ipset
-    fi
+  if ! command -v ipset >/dev/null 2>&1 ; then
+    echo -e "${Green}正在安装 ipset…${Font}"
+    [[ $PM == "yum" ]] && yum install -y ipset iptables-services >/dev/null
+    [[ $PM == "apt" ]] && apt  update -qq && apt  install -y ipset iptables >/dev/null
+  fi
 }
 
-#开始菜单
-main(){
-root_need
-check_release
-clear
-echo -e "———————————————————————————————————————"
-echo -e "${Green}Linux VPS一键屏蔽指定国家所有的IP访问${Font}"
-echo -e "${Green}1、封禁ip${Font}"
-echo -e "${Green}2、解封iP${Font}"
-echo -e "${Green}3、查看封禁列表${Font}"
-echo -e "———————————————————————————————————————"
-read -p "请输入数字 [1-3]:" num
-case "$num" in
-    1)
-    block_ipset
-    ;;
-    2)
-    unblock_ipset
-    ;;
-    3)
-    block_list
-    ;;
-    *)
-    clear
-    echo -e "${Green}请输入正确数字 [1-3]${Font}"
-    sleep 2s
-    main
-    ;;
-    esac
+# ---------- 主要功能 ----------
+block_ipset(){
+  check_ipset
+
+  # ① 国家代码（小写 ISO 3166-1 alpha-2）
+  echo -e "${Green}输入要封禁的国家代码，例如 cn（中国）：${Font}"
+  read -rp "Country code: " GEOIP
+
+  # ② 端口（交互输入，可多端口逗号分隔）
+  echo -e "${Green}输入要封锁的端口（可写多个，用逗号分隔，例如 25,465）：${Font}"
+  read -rp "Port(s): " PORTS
+
+  # ③ 下载国家 IP 段
+  echo -e "${Green}正在下载 ${GEOIP} IP 地址段…${Font}"
+  wget -qO "/tmp/${GEOIP}.zone" "https://www.ipdeny.com/ipblocks/data/countries/${GEOIP}.zone"
+  if [[ ! -s /tmp/${GEOIP}.zone ]]; then
+    echo -e "${Red}下载失败，请检查国家代码！${Font}"
+    exit 1
+  fi
+
+  # ④ 创建 ipset 集合
+  ipset destroy "$GEOIP" 2>/dev/null
+  ipset create  "$GEOIP" hash:net
+  while read -r ip; do ipset add "$GEOIP" "$ip"; done < "/tmp/${GEOIP}.zone"
+  rm -f "/tmp/${GEOIP}.zone"
+
+  # ⑤ 写入 iptables 规则（仅指定端口）
+  OLD_RULE_EXISTS=$(iptables -S | grep -F "match-set $GEOIP src" || true)
+  if [[ -n $OLD_RULE_EXISTS ]]; then
+    echo -e "${Green}检测到旧规则，已跳过重复添加。${Font}"
+  fi
+
+  IFS=',' read -ra ARR <<< "$PORTS"
+  for p in "${ARR[@]}"; do
+    iptables -I INPUT -p tcp --dport "$p" -m set --match-set "$GEOIP" src -j DROP
+  done
+
+  echo -e "${Green}${GEOIP} 的 IP 已成功封禁端口 ${PORTS}！${Font}"
 }
-main
+
+unblock_ipset(){
+  echo -e "${Green}输入要解除封禁的国家代码：${Font}"
+  read -rp "Country code: " GEOIP
+  ipset destroy "$GEOIP" 2>/dev/null
+  # 同时删除相关 iptables 规则
+  while iptables -D INPUT -m set --match-set "$GEOIP" src -j DROP 2>/dev/null; do : ; done
+  echo -e "${Green}已删除 ${GEOIP} 相关规则。${Font}"
+}
+
+# ---------- 菜单 ----------
+menu(){
+  clear
+  echo -e "
+${Green}一键封锁 / 解除 指定国家 IP 段${Font}
+----------------------------------------
+1) 封锁指定国家（交互式）
+2) 解除封锁
+0) 退出
+"
+  read -rp "请选择 [0-2]: " num
+  case "$num" in
+    1) root_need; system_check; block_ipset ;;
+    2) root_need; unblock_ipset ;;
+    0) exit 0 ;;
+    *) echo -e "${Red}请输入正确数字！${Font}" ; sleep 1 ; menu ;;
+  esac
+}
+
+menu
