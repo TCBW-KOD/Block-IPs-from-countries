@@ -47,18 +47,6 @@ Port(s): 25,465
 - 销毁对应 `ipset` 集合  
 - 删除所有关联的 `iptables` 规则
 
-### 3. 持久化规则
-- CentOS（iptables-services）：  
-  ```bash
-  service iptables save
-  systemctl enable iptables --now
-  ```
-- Debian/Ubuntu：  
-  ```bash
-  iptables-save > /etc/iptables.rules
-  # 在 /etc/rc.local 或 systemd unit 中加载：
-  iptables-restore /dev/null 2>&1
-
 ## 致谢
 - 原脚本作者 **Moerats** 提供的基础实现  
 - IPdeny 提供公开的世界各国 IP 段数据  
