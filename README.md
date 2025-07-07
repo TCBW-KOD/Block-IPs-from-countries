@@ -15,7 +15,7 @@
 
 ```bash
 # 下载脚本
-wget -O block-ips.sh https://raw.githubusercontent.com/你的仓库/Block-IPs-from-countries/master/block-ips.sh
+wget -O block-ips.sh https://raw.githubusercontent.com/TCBW-KOD/Block-IPs-from-countries/refs/heads/master/block-ips.sh
 chmod +x block-ips.sh
 
 # 运行脚本（交互式）
