@@ -7,6 +7,7 @@
 # -----------------------------------------------
 # 原始仓库: https://github.com/iiiiiii1/Block-IPs-from-countries [1]
 # -----------------------------------------------
+
 Green="\033[32m"; Red="\033[31m"; Font="\033[0m"
 PM=""      # 包管理器 (yum|apt)
 
@@ -59,7 +60,7 @@ EOF
     systemctl enable iptables ipset >/dev/null
 
   else   # Debian / Ubuntu
-    DEBIAN_FRONTEND=noninteractive apt -y install iptables-persistent >/dev/null   # 自动保存 v4/v6 规则[1]
+    DEBIAN_FRONTEND=noninteractive apt -y install iptables-persistent >/dev/null   # 自动保存 v4/v6 规则
     iptables-save > /etc/iptables/rules.v4
     ipset   save > /etc/ipset.conf
 
@@ -102,14 +103,18 @@ block_ipset() {
   # ④ 创建 / 更新 ipset
   ipset destroy "$GEOIP" 2>/dev/null
   ipset create  "$GEOIP" hash:net
-  while read -r ip; do ipset add "$GEOIP" "$ip"; done < "/tmp/${GEOIP}.zone"
+  while read -r ip; do
+    ipset add -exist "$GEOIP" "$ip"
+  done < "/tmp/${GEOIP}.zone"
   rm -f "/tmp/${GEOIP}.zone"
 
   # ⑤ 写入 iptables（仅指定端口）
   IFS=',' read -ra P_ARR <<< "$PORTS"
   for p in "${P_ARR[@]}"; do
-    iptables -C INPUT -p tcp --dport "$p" -m set --match-set "$GEOIP" src -j DROP 2>/dev/null \
-      || iptables -I INPUT  -p tcp --dport "$p" -m set --match-set "$GEOIP" src -j DROP
+    # 先检查是否已存在规则，避免重复插入
+    if ! iptables -C INPUT -p tcp --dport "$p" -m set --match-set "$GEOIP" src -j DROP 2>/dev/null; then
+      iptables -I INPUT -p tcp --dport "$p" -m set --match-set "$GEOIP" src -j DROP
+    fi
   done
 
   echo -e "${Green}${GEOIP} IP 已封禁端口 ${PORTS}！${Font}"
@@ -117,12 +122,28 @@ block_ipset() {
 }
 
 unblock_ipset() {
-  echo -e "${Green}输入要解除封禁的国家代码：${Font}"
+  echo -e "${Green}输入要解除封禁的国家代码（小写）：${Font}"
   read -rp "Country code: " GEOIP
+
+  echo -e "${Green}输入要解除封禁的端口（可多个逗号分隔）：${Font}"
+  read -rp "Port(s): " PORTS
+
+  # 删除 iptables 规则时针对每个端口删除对应规则
+  IFS=',' read -ra P_ARR <<< "$PORTS"
+  for p in "${P_ARR[@]}"; do
+    # 循环删除所有匹配规则，直到无此规则为止
+    while iptables -C INPUT -p tcp --dport "$p" -m set --match-set "$GEOIP" src -j DROP 2>/dev/null; do
+      iptables -D INPUT -p tcp --dport "$p" -m set --match-set "$GEOIP" src -j DROP
+    done
+  done
+
+  # 删除 ipset 集合
   ipset destroy "$GEOIP" 2>/dev/null
-  while iptables -D INPUT -m set --match-set "$GEOIP" src -j DROP 2>/dev/null; do :; done
+
+  # 持久化保存规则
   persist_rules
-  echo -e "${Green}已解除 ${GEOIP} 相关规则。${Font}"
+
+  echo -e "${Green}已解除 ${GEOIP} 端口 ${PORTS} 的封禁规则。${Font}"
 }
 
 # ---------- 菜单 ----------
@@ -132,13 +153,13 @@ menu() {
 ${Green}一键封锁 / 解除 指定国家 IP 段${Font}
 ----------------------------------------
 1) 封锁指定国家（交互式）
-2) 解除封禁
+2) 解除封禁（交互式）
 0) 退出
 "
   read -rp "请选择 [0-2]: " num
   case "$num" in
     1) root_need; system_check; install_deps; block_ipset ;;
-    2) root_need; system_check; unblock_ipset ;;
+    2) root_need; system_check; install_deps; unblock_ipset ;;
     0) exit 0 ;;
     *) echo -e "${Red}请输入正确数字！${Font}" ; sleep 1 ; menu ;;
   esac
