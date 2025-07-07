@@ -58,8 +58,6 @@ Port(s): 25,465
   iptables-save > /etc/iptables.rules
   # 在 /etc/rc.local 或 systemd unit 中加载：
   iptables-restore /dev/null 2>&1
-```
-> 脚本检测到同名 `ipset` 时会覆盖更新，无需手工删除。
 
 ## 致谢
 - 原脚本作者 **Moerats** 提供的基础实现  
